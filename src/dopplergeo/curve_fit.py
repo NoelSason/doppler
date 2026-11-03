@@ -141,6 +141,8 @@ def fit_ideal_curve(
     min_f0_halfwidth: float = 2.0,
     sigma_mult: float = 3.0,
     weight_by_strength: bool = True,
+    robust: bool = True,
+    robust_scale_hz: float = 1.0,
 ) -> CurveMeasurement:
     """Multi-start least-squares fit of :func:`acoustics.ideal_curve`.
 
@@ -152,6 +154,14 @@ def fit_ideal_curve(
     square root of the ridge's whitened brightness, so frames where the tone
     has faded into the background count for little. ``rmse_hz`` is the
     weighted RMS residual with those weights normalised to unit mean square.
+
+    With ``robust`` (default) the first pass uses a Cauchy loss with scale
+    ``robust_scale_hz`` on the whole ridge and on three sub-windows of it,
+    keeps the fit with the most inliers (residual within ``max(scale, 5
+    MAD)``) over the whole ridge, and a plain least squares on those inliers
+    gives the reported values and ranges. This is what survives a ridge
+    tracker that wandered onto a neighbouring tone for the start or the end
+    of the box.
     """
     t = np.asarray(ridge.times, dtype=np.float64)
     f = np.asarray(ridge.freqs, dtype=np.float64)
@@ -180,32 +190,80 @@ def fit_ideal_curve(
     lower = np.array([max(f_lo - f_span, 0.5 * f_lo), v_lo, d_lo, t_lo - t_span])
     upper = np.array([f_hi + f_span, v_hi, d_hi, t_hi + t_span])
 
-    def residuals(p: np.ndarray) -> np.ndarray:
-        f0, v, d, tc = p
-        return w * (ideal_curve(t, f0, v, d, tc, c) - f)
-
     speeds = sorted({float(np.clip(v, v_lo, v_hi)) for v in _START_SPEEDS_MPS}
                     | {float(np.clip(_speed_from_ratio(f, c), v_lo, v_hi))})
     slants = sorted({float(np.clip(d, d_lo, d_hi)) for d in _START_SLANTS_M})
     t_starts = _t_cpa_candidates(t, f, f0_guess)
     f0_start = float(np.clip(f0_guess, lower[0], upper[0]))
+    starts = [
+        np.array([f0_start, v0, d0, float(np.clip(tc0, lower[3], upper[3]))])
+        for v0, d0, tc0 in product(speeds, slants, t_starts)
+    ]
 
-    best = None
-    for v0, d0, tc0 in product(speeds, slants, t_starts):
-        x0 = np.array([f0_start, v0, d0, float(np.clip(tc0, lower[3], upper[3]))])
-        try:
-            res = least_squares(
-                residuals, x0, bounds=(lower, upper), method="trf",
-                x_scale=np.array([1.0, 10.0, 100.0, 1.0]), max_nfev=400,
-            )
-        except (ValueError, FloatingPointError):
-            continue
-        if not np.all(np.isfinite(res.fun)):
-            continue
-        if best is None or res.cost < best.cost:
-            best = res
-    if best is None:
-        raise RuntimeError("every start of the curve fit failed")
+    def run_fits(mask: np.ndarray, x0s: list[np.ndarray], loss: str):
+        tt, ff, ww = t[mask], f[mask], w[mask]
+
+        def residuals(p: np.ndarray) -> np.ndarray:
+            f0, v, d, tc = p
+            return ww * (ideal_curve(tt, f0, v, d, tc, c) - ff)
+
+        best = None
+        for x0 in x0s:
+            try:
+                res = least_squares(
+                    residuals, x0, bounds=(lower, upper), method="trf", loss=loss,
+                    f_scale=robust_scale_hz, x_scale=np.array([1.0, 10.0, 100.0, 1.0]),
+                    max_nfev=400,
+                )
+            except (ValueError, FloatingPointError):
+                continue
+            if not np.all(np.isfinite(res.fun)):
+                continue
+            if best is None or res.cost < best.cost:
+                best = res
+        return best
+
+    # Pass 1: multi-start with a Cauchy loss on the whole ridge and on a few
+    # sub-windows of it. A ridge tracker that wandered onto another tone for
+    # the start or the end of the box leaves a contiguous block of outliers;
+    # a window that excludes the block fits the real curve, and that fit is
+    # recognised by having the most inliers over the whole ridge.
+    all_pts = np.ones(t.size, dtype=bool)
+    if robust:
+        windows = [all_pts]
+        for lo_frac, hi_frac in ((0.0, 0.7), (0.3, 1.0), (0.2, 0.8)):
+            t_a = t_lo + lo_frac * (t_hi - t_lo)
+            t_b = t_lo + hi_frac * (t_hi - t_lo)
+            win = (t >= t_a) & (t <= t_b)
+            if win.sum() >= _MIN_POINTS:
+                windows.append(win)
+        best = None
+        best_key = None
+        for win in windows:
+            res = run_fits(win, starts, "cauchy")
+            if res is None:
+                continue
+            resid = ideal_curve(t, *res.x, c) - f
+            # Truncated-quadratic cost over the whole ridge: every frame pays
+            # its squared residual up to one scale, so a compromise fit that
+            # straddles two tones (small residuals nowhere, medium residuals
+            # everywhere) loses to a fit that nails the longer block.
+            inlier = np.abs(resid) <= robust_scale_hz
+            key = -float(np.sum(np.minimum(resid**2, robust_scale_hz**2)))
+            if best_key is None or key > best_key:
+                best, best_key, best_inlier = res, key, inlier
+        if best is None:
+            raise RuntimeError("every start of the curve fit failed")
+        # Pass 2: plain least squares on the inliers, which gives an honest
+        # covariance for the ranges.
+        mask = best_inlier if best_inlier.sum() >= _MIN_POINTS else all_pts
+        refit = run_fits(mask, [best.x], "linear")
+        if refit is not None:
+            best = refit
+    else:
+        best = run_fits(all_pts, starts, "linear")
+        if best is None:
+            raise RuntimeError("every start of the curve fit failed")
 
     f0, v, d, tc = (float(x) for x in best.x)
     n, n_par = best.fun.size, best.x.size

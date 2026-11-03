@@ -67,7 +67,7 @@ class ScoreConfig:
     time_step_s: float = 0.25
     f0_sweep_hz: float = 1.5  # ± sweep of the emitted frequency
     f0_step_hz: float = 0.25
-    harmonics: tuple[float, ...] = (1.0,)  # weights for k = 1..K multiples of f0
+    harmonics: tuple[float, ...] = (1.0, 0.5)  # weights for k = 1..K multiples of f0; propeller tones carry harmonics, and the second doubles the frequency resolution of a mismatch
     # Brightness is clipped at this many whitened sigmas before averaging, so
     # the score measures how much of the curve is lit rather than how bright
     # its brightest half is. A wrong flight with the right speed matches one

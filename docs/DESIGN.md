@@ -61,8 +61,12 @@ class Ridge:
     times: np.ndarray; freqs: np.ndarray; strength: np.ndarray
 
 def extract_ridge(spec: Spectrogram, t_start, t_end, f_min, f_max,
-                  *, max_slope_hz_per_s=3.0) -> Ridge   # Viterbi over whitened power
+                  *, max_slope_hz_per_s=3.0, jump_penalty=4.0,
+                  already_whitened=False) -> Ridge   # Viterbi over whitened power
 ```
+The jump penalty is quadratic in the per-frame frequency step and reaches
+``jump_penalty`` whitened sigmas at the slope limit; set the limit from the
+expected pass (``f0 v^2 / (c d)`` at the closest point, about 1–7 Hz/s).
 
 ### `curve_fit.py`
 
@@ -81,9 +85,14 @@ def fit_ideal_curve(ridge: Ridge, *, c=343.0, speed_bounds=(15.0, 250.0),
                     min_f0_halfwidth=2.0, sigma_mult=3.0) -> CurveMeasurement
 ```
 Multi-start `scipy.optimize.least_squares` of `acoustics.ideal_curve` against
-the ridge. Ranges = fit ± max(min halfwidth, sigma_mult × std from the
-Jacobian covariance). Generous on purpose: a wrong range silently drops the
-true answer.
+the ridge. Robust by default (`robust=True, robust_scale_hz=1.0`): a Cauchy
+loss on the whole ridge and on three sub-windows, the fit with the lowest
+truncated-quadratic cost over the whole ridge wins, then a plain least
+squares on its inliers gives the values and the covariance. This survives a
+ridge that wandered onto a neighbouring tone for the start or the end of the
+box. Ranges = fit ± max(min halfwidth, sigma_mult × std from the Jacobian
+covariance). Generous on purpose: a wrong range silently drops the true
+answer.
 
 ### `adsb/aircraft_types.py`, `adsb/sources.py`, `adsb/tracks.py`
 
@@ -153,9 +162,10 @@ class ScoreConfig:
     curve_step_s: float = 0.25
     time_sweep_s: float = 3.0        # ± sweep of the audio/geometry alignment
     time_step_s: float = 0.25
-    f0_sweep_hz: float = 3.0         # ± sweep of the emitted frequency
+    f0_sweep_hz: float = 1.5         # ± sweep of the emitted frequency
     f0_step_hz: float = 0.25
-    harmonics: tuple[float, ...] = (1.0,)   # weights for k = 1..K multiples of f0
+    harmonics: tuple[float, ...] = (1.0, 0.5)   # weights for k = 1..K multiples of f0
+    clip_sigma: float | None = None  # optional brightness clip before averaging
 
 @dataclass
 class EventScore:
@@ -173,8 +183,24 @@ def score_pair(spec_w, traj1, traj2, observer_enu, *, m1, m2, t_cpa_rx_geom_1, t
 # (t_rx_geom_2 - t_cpa_rx_geom_1) + m1.t_cpa_rx + dt, with only its own f0 swept.
 ```
 
-### `search.py` (integration), `cli.py`
+### `search.py` (integration), `cli.py`, `demo.py`
 
-* `two_event_search(audio, sr, tracks, m1, m2, dem, cfg)` → ranked pairs.
-* `single_event_search(audio, sr, tracks, m, known_t_cpa_rx_geom ± tol, dem, cfg)`.
-* Refinement: top pairs expanded to a 100 m local grid, re-scored.
+* `two_event_search(spec_w, tracks, m1, m2, dem, cfg)` → `SearchResult` with
+  the candidate tables of each stage, the coarse scores, the 100 m refinement
+  and the best row per flight pair.
+* `single_event_search(spec_w, tracks, m, dem, t_known_rx_geom, tol_s, cfg)`:
+  the known time only gates which (cell, flight) rows are considered; each
+  curve is still aligned by its own CPA with the usual small sweep. What is
+  left is an along-track ambiguity of about `tol_s × speed` that only the
+  flight's own turns can break.
+* Each flight pair is scored in the ENU frame of its first flight, so a
+  nationwide search never relies on one tangent plane.
+* `demo.py` builds a synthetic region, renders audio with `synth.py`, and
+  runs both searches; `figures.py` draws the README figures from the result.
+
+### Environment note
+
+Python 3.12+ skips `.pth` files that carry the macOS hidden flag, and
+dotfolders under `~/Desktop` on the author's machine keep acquiring that
+flag, which silently breaks the editable install. The `justfile` therefore
+puts the virtualenv in `~/.venvs/dopplergeo` (`UV_PROJECT_ENVIRONMENT`).

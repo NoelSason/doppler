@@ -67,6 +67,11 @@ class SearchResult:
 
     @property
     def best(self) -> pd.Series:
+        if len(self.by_flight_pair) == 0:
+            raise LookupError(
+                "no candidate survived the filters; widen the measurement ranges, "
+                "the offset tolerance, or the silence radius"
+            )
         return self.by_flight_pair.iloc[0]
 
     def summary(self, n: int = 5) -> str:

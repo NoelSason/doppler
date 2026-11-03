@@ -209,9 +209,13 @@ def run_demo(out: Path, *, seed: int = 0, figures: bool = True, log=print) -> di
     log(f"[demo] best: ({best['lat']:.5f}, {best['lon']:.5f}) via {best['flight_id_1']} + {best['flight_id_2']}, total {best['total']:.2f}; truth cell survived filters: {in_pairs}")
     log(f"[demo] distance from truth: {err_m:.0f} m; runner-up flight pair total {res.by_flight_pair['total'].iloc[1] if len(res.by_flight_pair) > 1 else float('nan'):.2f}")
 
-    # Single-event mode: the faint event alone plus the recording time ±60 s.
-    known_rx = tr["evt2"]["t_cpa_rx_audio"] + AUDIO_START + 17.0  # "the clock said about 20:47"
-    res1 = single_event_search(spec_w, sc.tracks, m2, sc.dem, known_rx, 60.0, cfg, log=log)
+    # Single-event mode: the second curve alone, plus a file timestamp that
+    # is 7 s off and trusted to ±20 s. The time window replaces the first
+    # curve as the constraint; what is left is an along-track ambiguity of
+    # about (tolerance x aircraft speed) that only the flight's own turns can
+    # break.
+    known_rx = tr["evt2"]["t_cpa_rx_audio"] + AUDIO_START + 7.0
+    res1 = single_event_search(spec_w, sc.tracks, m2, sc.dem, known_rx, 20.0, cfg, log=log)
     best1 = res1.best
     err1_m = float(haversine_m(best1["lat"], best1["lon"], sc.observer_lat, sc.observer_lon))
     log(f"[demo] single-event best: ({best1['lat']:.5f}, {best1['lon']:.5f}) via {best1['flight_id']}, score {best1['score']:.2f}; distance from truth {err1_m:.0f} m")

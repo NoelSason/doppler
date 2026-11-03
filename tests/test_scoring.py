@@ -305,7 +305,7 @@ def test_lock_dt_fixes_alignment(scene: Scene, cfg: ScoreConfig) -> None:
 
 
 def test_harmonic_weights_raise_score_when_harmonics_painted(scene: Scene) -> None:
-    base = _pair_at(scene, scene.obs, ScoreConfig(), spec=scene.spec_harm)
+    base = _pair_at(scene, scene.obs, ScoreConfig(harmonics=(1.0,)), spec=scene.spec_harm)
     harm = _pair_at(scene, scene.obs, ScoreConfig(harmonics=(1.0, 0.5, 0.3)), spec=scene.spec_harm)
     assert harm.score_1 > 1.2 * base.score_1
     assert harm.score_2 > 1.2 * base.score_2

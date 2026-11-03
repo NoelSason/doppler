@@ -106,8 +106,8 @@ def fig_map(out: Path, sc, res: SearchResult, cfg_grid: float = 200.0) -> None:
     ax.scatter(e / 1000, n / 1000, s=6, color=ACCENT2, alpha=0.9, label=f"heard both, 920 s apart, silence between ({len(p):,})")
     sc_df = res.scored
     e, n = enu_from_latlon(sc_df["lat"].to_numpy(), sc_df["lon"].to_numpy(), lat0, lon0)
-    top = sc_df["total"] >= np.percentile(sc_df["total"], 95) if len(sc_df) else np.zeros(0, bool)
-    ax.scatter(e[top] / 1000, n[top] / 1000, s=14, color=ACCENT, alpha=0.9, label="top 5% by curve-shape score")
+    top = sc_df["total"] >= np.percentile(sc_df["total"], 90) if len(sc_df) else np.zeros(0, bool)
+    ax.scatter(e[top] / 1000, n[top] / 1000, s=22, color=ACCENT, alpha=0.95, label="top 10% by curve-shape score")
     b = res.best
     e, n = enu_from_latlon(b["lat"], b["lon"], lat0, lon0)
     ax.scatter([e / 1000], [n / 1000], marker="*", s=260, color="white", edgecolor="black", zorder=5, label="best candidate")

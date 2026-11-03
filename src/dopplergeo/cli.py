@@ -180,7 +180,7 @@ def _add_search_args(p: argparse.ArgumentParser) -> None:
     p.add_argument("--silence-margin", type=float, default=30.0)
     p.add_argument("--keep-jets", action="store_true")
     p.add_argument("--refine-top", type=int, default=50)
-    p.add_argument("--harmonics", type=float, nargs="+", default=[1.0])
+    p.add_argument("--harmonics", type=float, nargs="+", default=[1.0, 0.5])
     p.add_argument("--top", type=int, default=10)
     p.add_argument("-o", "--out")
 

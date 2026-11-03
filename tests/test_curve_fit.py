@@ -131,7 +131,8 @@ def test_fit_bounds_are_respected():
     t = np.arange(0.0, 90.0, 0.25)
     f = ideal_curve(t, 110.0, 75.0, 800.0, 47.3)
     ridge = Ridge(t, f, np.full(t.size, 6.0))
-    m = fit_ideal_curve(ridge, speed_bounds=(15.0, 50.0), slant_bounds=(50.0, 10_000.0))
+    # robust=False so rmse covers every frame, not just the inliers.
+    m = fit_ideal_curve(ridge, speed_bounds=(15.0, 50.0), slant_bounds=(50.0, 10_000.0), robust=False)
     assert 15.0 <= m.speed_mps <= 50.0
     assert m.rmse_hz > 0.5  # the true curve is outside the box
 
@@ -166,3 +167,24 @@ def test_measurement_json_roundtrip():
     back = CurveMeasurement.from_dict(json.loads(text))
     assert back == m
     assert isinstance(back.speed_range, tuple)
+
+
+def test_fit_survives_ridge_wandering_onto_another_tone():
+    """The last fifth of the ridge sits on a flat 116 Hz tone; the fit must
+    still recover the flyover and its ranges must still contain the truth."""
+    import numpy as np
+
+    from dopplergeo.acoustics import ideal_curve
+    from dopplergeo.curve_fit import fit_ideal_curve
+    from dopplergeo.spectrogram import Ridge
+
+    t = np.arange(80.0, 220.0, 0.25)
+    f = ideal_curve(t, 118.0, 64.0, 1080.0, 153.4)
+    bad = t >= 198.0
+    f = np.where(bad, 116.0 + 0.1 * np.sin(t), f)
+    strength = np.where(bad, 4.6, 7.0)
+    m = fit_ideal_curve(Ridge(times=t, freqs=f, strength=strength))
+    assert abs(m.speed_mps - 64.0) < 2.0
+    assert abs(m.cpa_slant_m - 1080.0) < 60.0
+    assert abs(m.f0_hz - 118.0) < 0.3
+    assert abs(m.t_cpa_rx - 153.4) < 0.5

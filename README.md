@@ -69,26 +69,31 @@ Single-event mode does the same with one curve and a known recording time: the t
 
 ## What was measured
 
-Numbers from `uv run dopplergeo demo` with the default seed (synthetic region of 40 km × 40 km, 20 flights, 20 minutes of 8 kHz audio, white noise at a level where the tones are a few dB above the floor in the spectrogram). Replace this table by running the demo yourself; nothing here was tuned to the scenario after the fact.
+Numbers from `just demo` with the default seed: a synthetic 40 km × 40 km region, 20 flights (17 propeller, 3 jets), 20 minutes of 8 kHz audio with every flight rendered into it plus white noise, and nothing but that audio and the track table given to the search.
 
 | | Event 1 | Event 2 |
 |---|---|---|
-| True speed / fitted | — | — |
-| True CPA slant / fitted | — | — |
-| True f0 / fitted | — | — |
+| Speed, true / fitted | 64.0 / **64.6 m/s** | 53.4 / **54.5 m/s** |
+| CPA slant distance, true / fitted | 1082 / **1070 m** | 1635 / **1619 m** |
+| Emitted frequency, true / fitted | 118.00 / **118.00 Hz** | 96.00 / **95.93 Hz** |
+| CPA heard at, true / fitted | 153.40 / **153.37 s** | 1074.77 / **1074.91 s** |
 
-| Stage | Cells or pairs left |
+| Stage | Left |
 |---|---|
-| speed + distance ring, event 1 | — |
-| both events at the measured offset | — |
-| silence between the events | — |
-| best candidate, distance from true microphone | **— m** |
-| best flight pair's lead over the runner-up | — |
-| single-event mode (known time ± 60 s), distance from truth | — m |
+| 200 m cells inside event 1's speed and distance ring, over all 17 flights | 16,629 |
+| cells inside event 2's ring | 15,181 |
+| cells that heard both, 921.5 ± 6 s apart | 29 |
+| and heard nothing else in between | 17 |
+| best candidate after the 100 m refinement, distance from the true microphone | **45 m** |
+| winning flight pair's score over the runner-up pair | 17.7 vs 14.8 |
+| single-event mode: one curve, recording time known to ±20 s, distance from truth | 1,455 m (right flight) |
+| wall time, Apple Silicon laptop | 24 s |
 
-- These are self-measured on synthetic audio whose physics the author also wrote. The synthesiser and the search model are different formulations (waveform phase versus instantaneous frequency), which is a real check of the Doppler and retarded-time maths, not of real-world robustness.
-- The decoy flights are random. Different seeds give different margins; the end-to-end test requires the winner to lead the runner-up by 30 % on every run it has been given.
-- Tests: `uv run pytest` runs — tests across 9 files (all passing on November 3, 2026). They cover the closed-form curve against the track model, the synthesiser against both, ridge extraction and fitting under noise, readsb trace parsing, candidate generation, the offset and silence filters, scoring with the locked offset, and the full demo.
+- Self-measured on synthetic audio whose physics the author also wrote. The synthesiser and the search model are different formulations (waveform phase versus instantaneous frequency), which checks the Doppler and retarded-time maths, not real-world robustness.
+- Across seeds 0–6 (different random decoy flights each time) the two-event search put the best candidate 45 m from the microphone on every run; on four of the seven, no other flight pair survived the offset and silence filters at all.
+- The runner-up pair is two decoy flights that happen to match the measured speeds within 2 m/s and the offset within 2 s. Its curves are nearly the same shape; what separates it is a few tenths of a hertz at the asymptotes, which is why the spectrogram is built at 0.5 Hz resolution and the second harmonic is scored too.
+- Single-event mode finds the right flight only when no other flight of the same speed and distance was airborne in the time window, and then leaves an along-track ambiguity of roughly the time tolerance times the aircraft speed. It picked the right flight on five of the seven seeds (441 m to 1,455 m from the truth) and a decoy on the other two.
+- Tests: `just test` runs 91 tests in 9 files (all passing on November 3, 2026). They cover the closed-form curve against the track model, the synthesiser against both, ridge extraction and fitting under noise and with a ridge that wanders onto another tone, readsb trace parsing, candidate generation on sloped terrain, the offset and silence filters, scoring with the locked offset, DEM access including live terrain tiles, and the full demo.
 
 ## Design decisions
 
@@ -97,6 +102,7 @@ Numbers from `uv run dopplergeo demo` with the default seed (synthetic region of
 - **Event 2 is locked to event 1.** Only the first curve may slide in time to absorb measurement error. The second must land where the flight geometry says it does. The inter-event offset is the strongest single constraint, and this is what keeps it from being fitted away.
 - **Unknown aircraft types are kept.** The jet filter removes only type codes positively known to be jets. A wrong "jet" label silently deletes the right answer; a missed jet merely costs compute.
 - **Ranges are generous by construction.** Every measured quantity carries a range of at least ±15 m/s, ±300 m, ±3 s, ±2 Hz, widened further by the fit covariance. Narrowing a range to make the search faster is how the true cell disappears.
+- **The fit does not trust the ridge tracker.** When the plane's tone fades, the tracker drifts onto whatever is brighter nearby, usually another aircraft or a harmonic. The fit runs a Cauchy loss on the whole ridge and on three sub-windows, keeps whichever explains the most frames, and only then reports a value. Two of the seven demo seeds needed that.
 - **An independent synthesiser.** Test audio is rendered as `sin(2π f0 τ(t))` with `τ` the emission time, never from the frequency model being tested.
 
 ## Architecture
@@ -131,13 +137,15 @@ flowchart LR
 
 ## Run it
 
-You need Python 3.12 or later and [uv](https://docs.astral.sh/uv/).
+You need Python 3.12 or later, [uv](https://docs.astral.sh/uv/) and [just](https://github.com/casey/just).
 
 ```bash
-uv sync --extra plots                      # core + matplotlib for the figures
-uv run dopplergeo demo --out demo          # synthetic end-to-end run, ~1 min, writes report.json and figures
-uv run pytest                              # the test suite
+just sync                                  # uv sync with the plots and dem extras
+just demo                                  # synthetic end-to-end run, ~30 s, writes demo/report.json and figures
+just test                                  # the test suite
 ```
+
+The `justfile` keeps the virtualenv in `~/.venvs/dopplergeo`. Python 3.12 skips `.pth` files that carry the macOS hidden flag, and dotfolders under `~/Desktop` can acquire it, which silently breaks an editable install placed there. Plain `uv sync` and `uv run` work anywhere else.
 
 On a real recording:
 
@@ -168,8 +176,9 @@ uv run dopplergeo search-single recording.wav tracks.parquet event1.json --time 
 - **Flat-earth frames.** Each flight is modelled in a local tangent plane about its own centroid; fine below 100 km, not for transcontinental tracks.
 - **Jets are only excluded when known.** The bundled ICAO type table is a curated subset. Load the OpenSky aircraft database for better coverage.
 - **A whole day of the continental US is heavy.** Candidate generation is vectorised per flight, but scoring tens of thousands of cells with sweeps takes minutes, and tens of GB of ADS-B history must be downloaded and clipped first.
+- **One curve is often not enough.** Single-event mode with a time known to a minute cannot tell two straight flights of the same speed and distance apart, and leaves an along-track ambiguity of about a kilometre. The published investigation got a precise answer that way because real flight paths wander; the synthetic ones barely do.
 - **No automatic curve detection.** You pick the box around each curve. The ridge tracker and fit do the rest.
 
 ## License
 
-MIT. Built by Noel Sason as a study of a technique published by [the geolocation investigator it reimplements](https://www.youtube.com); most of the code was written with Claude under the author's direction.
+MIT. Built by Noel Sason as a study of a technique from a published video investigation that located a security camera from the inaudible aircraft in its audio; this is an independent reimplementation, not that author's code. Most of the code was written with Claude under the author's direction.
