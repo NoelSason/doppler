@@ -1,0 +1,36 @@
+[project]
+name = "dopplergeo"
+version = "0.1.0"
+description = "Locate where a recording was made from the Doppler curves of aircraft flying over, using ADS-B flight tracks."
+readme = "README.md"
+authors = [
+    { name = "Noel Sason", email = "noel_sason@berkeley.edu" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "numpy>=2.5.4",
+    "pandas>=3.1.0",
+    "pyarrow>=26.0.1",
+    "scipy>=1.18.1",
+    "soundfile>=0.14.0",
+]
+
+[project.optional-dependencies]
+dem = ["rasterio>=1.4"]
+plots = ["matplotlib>=3.9"]
+opensky = ["pyopensky>=2.11"]
+
+[project.scripts]
+dopplergeo = "dopplergeo.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.10.4,<0.11.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.2.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
