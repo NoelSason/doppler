@@ -24,6 +24,7 @@ from scipy.signal.windows import hann
 _POWER_EPS = 1e-12
 _SCALE_EPS = 1e-6
 _FRAMES_PER_CHUNK = 256
+_REFINE_BINS = 2
 
 
 def load_audio(path: str | Path, target_sr: int = 8000) -> tuple[np.ndarray, int]:
@@ -203,8 +204,8 @@ def extract_ridge(
     Viterbi over the whitened power: the path maximises the sum of brightness
     along it, minus a quadratic penalty that reaches one whitened sigma at
     the maximum allowed jump, ``max_slope_hz_per_s * hop``. Jumps beyond that
-    are not allowed. The peak is refined to sub-bin precision with a parabola
-    through the three bins around it.
+    are not allowed. The peak is refined to sub-bin precision with a
+    power-weighted centroid over the neighbouring bins.
 
     Pass ``already_whitened=True`` to skip the whitening when ``spec`` came
     from :meth:`Spectrogram.whitened`.
@@ -257,18 +258,24 @@ def extract_ridge(
 
     frames = np.arange(nt)
     centre = W[path, frames]
-    delta = np.zeros(nt)
-    interior = (path > 0) & (path < nf - 1)
-    if interior.any():
-        pi = path[interior]
-        fi = frames[interior]
-        a = W[pi - 1, fi]
-        b = centre[interior]
-        c = W[pi + 1, fi]
-        denom = a - 2.0 * b + c
-        with np.errstate(divide="ignore", invalid="ignore"):
-            d = np.where(denom < 0.0, 0.5 * (a - c) / denom, 0.0)
-        delta[interior] = np.clip(np.nan_to_num(d), -0.5, 0.5)
+
+    # Sub-bin refinement: power-weighted centroid over +-_REFINE_BINS bins.
+    # A 2 s window smears the chirp near CPA into a plateau several bins
+    # wide, where a parabola through three bins is unreliable; the centroid
+    # of a symmetric smear is unbiased. Linear power from the raw spectrogram
+    # is best (whitening rescales each bin differently); whitened brightness
+    # is the fallback when that is all we have.
+    offs = np.arange(-_REFINE_BINS, _REFINE_BINS + 1)
+    jj = np.clip((j0 + path)[:, None] + offs[None, :], 0, spec_w.freqs.size - 1)
+    tt = (i0 + frames)[:, None]
+    if already_whitened:
+        wgt = spec_w.power_db[jj, tt]
+    else:
+        lin = np.power(10.0, spec.power_db[jj, tt] / 10.0)
+        wgt = lin - lin.min(axis=1, keepdims=True)
+    total = wgt.sum(axis=1)
+    delta = np.where(total > 0, (wgt * offs).sum(axis=1) / np.where(total > 0, total, 1.0), 0.0)
+    delta = np.clip(delta, -_REFINE_BINS, _REFINE_BINS)
 
     freqs = spec_w.freqs[j0 + path] + delta * df
     return Ridge(spec_w.times[i0:i1].copy(), freqs, centre.copy())
