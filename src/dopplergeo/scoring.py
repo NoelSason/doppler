@@ -65,9 +65,15 @@ class ScoreConfig:
     curve_step_s: float = 0.25
     time_sweep_s: float = 3.0  # ± sweep of the audio/geometry alignment
     time_step_s: float = 0.25
-    f0_sweep_hz: float = 3.0  # ± sweep of the emitted frequency
+    f0_sweep_hz: float = 1.5  # ± sweep of the emitted frequency
     f0_step_hz: float = 0.25
     harmonics: tuple[float, ...] = (1.0,)  # weights for k = 1..K multiples of f0
+    # Brightness is clipped at this many whitened sigmas before averaging, so
+    # the score measures how much of the curve is lit rather than how bright
+    # its brightest half is. A wrong flight with the right speed matches one
+    # asymptote of the S and can be very bright there; clipping keeps that from
+    # outscoring a curve that is faint but lit end to end. None disables it.
+    clip_sigma: float | None = None
 
 
 @dataclass
@@ -149,6 +155,8 @@ def score_event(
 
     values, inbounds = spec_w.sample(t_flat, f_flat)
     values = np.asarray(values, dtype=float).reshape(shape)
+    if cfg.clip_sigma is not None:
+        values = np.minimum(values, cfg.clip_sigma)
     inbounds = np.asarray(inbounds, dtype=bool).reshape(shape)
 
     # Count a curve sample only where the model is valid and the fundamental

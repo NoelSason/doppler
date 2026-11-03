@@ -100,29 +100,40 @@ def build_scenario(seed: int = 0) -> Scenario:
     df2 = straight_track("evt2", t_cpa2 - back, 720.0, LAT0, LON0, 650.0, 52.0, 95.0, turn_rate_dps=-0.1, accel_mps2=0.004, typecode="P28A")
     add(place(df2, t_cpa2, -1500.0, 650.0), 96.0, amp=1.0)
 
-    # Decoy propeller flights around the region, some at similar speeds.
+    def breaks_silence(df: pd.DataFrame) -> bool:
+        """True if this flight would be heard at the microphone between the
+        two events (it would then show up as a third curve, and the analyst
+        would not call the gap silent)."""
+        traj = trajectory_from_rows(df, LAT0, LON0)
+        t_cpa, slant = closest_point_of_approach(traj, obs_enu)
+        heard = t_cpa + slant / C
+        return slant < 6000.0 and (t_cpa1 - 200.0) < heard < (t_cpa2 + 200.0)
+
+    def random_decoy(name: str, typecode: str, *, jet: bool) -> pd.DataFrame:
+        for _ in range(200):
+            lat, lon = latlon_from_enu(rng.uniform(-18000, 18000), rng.uniform(-18000, 18000), LAT0, LON0)
+            if jet:
+                df = straight_track(name, AUDIO_START + rng.uniform(0, AUDIO_LEN), 400.0, lat, lon, 3000.0 + rng.uniform(0, 3000), rng.uniform(140, 220), rng.uniform(0, 360), typecode=typecode)
+            else:
+                t_start = AUDIO_START - 300.0 + rng.uniform(0, AUDIO_LEN)
+                speed = float(rng.choice([48.0, 55.0, 62.0, 66.0, 75.0, 90.0]))
+                df = straight_track(name, t_start, 600.0, lat, lon, obs_elev + rng.uniform(400, 1500), speed, rng.uniform(0, 360), turn_rate_dps=rng.uniform(-0.2, 0.2), typecode=typecode)
+            if not breaks_silence(df):
+                return df
+        raise RuntimeError("could not place a decoy that keeps the gap silent")
+
+    # Decoy propeller flights around the region, some at similar speeds. They
+    # are rendered into the audio too, so they must not pass the microphone
+    # between the events.
     for k in range(14):
-        e = rng.uniform(-18000, 18000)
-        n = rng.uniform(-18000, 18000)
-        # Keep decoys from flying straight over the microphone between the events.
-        if abs(e - obs_e) < 6000 and abs(n - obs_n) < 6000:
-            e += 9000.0
-        lat, lon = latlon_from_enu(e, n, LAT0, LON0)
-        t_start = AUDIO_START - 300.0 + rng.uniform(0, AUDIO_LEN)
-        speed = float(rng.choice([48.0, 55.0, 62.0, 66.0, 75.0, 90.0]))
-        add(
-            straight_track(f"dec{k:02d}", t_start, 600.0, lat, lon, obs_elev + rng.uniform(400, 1500), speed, rng.uniform(0, 360), turn_rate_dps=rng.uniform(-0.2, 0.2), typecode=str(rng.choice(["C172", "SR22", "PA28", "BE36", ""]))),
-            float(rng.uniform(85, 140)),
-            amp=0.8,
-        )
+        add(random_decoy(f"dec{k:02d}", str(rng.choice(["C172", "SR22", "P28A", "BE36", ""])), jet=False), float(rng.uniform(85, 140)), amp=0.8)
     # A decoy that flies between the two events on the far side of the region:
     # it must trip the silence filter for cells near it, not for the truth.
     lat, lon = latlon_from_enu(obs_e - 12000.0, obs_n + 9000.0, LAT0, LON0)
     add(straight_track("between", t_cpa1 + 300.0, 500.0, lat, lon, obs_elev + 700.0, 60.0, 180.0, typecode="C172"), 110.0, amp=0.8)
     # Jets: fast, high; the type filter should remove them from the candidates.
     for k in range(3):
-        lat, lon = latlon_from_enu(rng.uniform(-15000, 15000), rng.uniform(-15000, 15000), LAT0, LON0)
-        add(straight_track(f"jet{k}", AUDIO_START + rng.uniform(0, AUDIO_LEN), 400.0, lat, lon, 3000.0 + 1000 * k, 140.0 + 20 * k, rng.uniform(0, 360), typecode="B738"), 60.0, amp=0.3)
+        add(random_decoy(f"jet{k}", "B738", jet=True), 60.0, amp=0.3)
 
     tracks = normalize_tracks(pd.concat(flights, ignore_index=True))
     audio = render_audio(sources, obs_enu, AUDIO_START, AUDIO_LEN, SR, noise_rms=0.25, seed=seed)

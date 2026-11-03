@@ -285,7 +285,10 @@ def single_event_search(
     cand = cand[np.abs(cand["t_cpa_rx"] - t_known_rx_geom) <= tol_s].reset_index(drop=True)
     log(f"[search] {len(cand)} (cell, flight) candidates in the time window")
 
-    score_cfg = ScoreConfig(**{**cfg.score.__dict__, "time_sweep_s": float(tol_s)})
+    # The known time only gates which (cell, flight) rows are considered; the
+    # curve is still aligned by its own CPA with the usual small sweep, since
+    # "about 20:37" is not a clock the spectrogram can be pinned to.
+    score_cfg = cfg.score
 
     def _score(df: pd.DataFrame) -> pd.DataFrame:
         if len(df) == 0:
@@ -294,7 +297,7 @@ def single_event_search(
         parts = []
         for fid, grp in df.groupby("flight_id", sort=False):
             traj, lat0, lon0 = frames[str(fid)]
-            parts.append(score_single(spec_w, grp, {str(fid): traj}, lat0, lon0, m, score_cfg, t_known_rx_geom=t_known_rx_geom, c=cfg.c))
+            parts.append(score_single(spec_w, grp, {str(fid): traj}, lat0, lon0, m, score_cfg, c=cfg.c))
         return pd.concat(parts, ignore_index=True)
 
     scored = _score(cand).sort_values("score", ascending=False).reset_index(drop=True)

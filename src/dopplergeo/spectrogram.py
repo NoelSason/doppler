@@ -197,14 +197,18 @@ def extract_ridge(
     f_max: float,
     *,
     max_slope_hz_per_s: float = 3.0,
+    jump_penalty: float = 4.0,
     already_whitened: bool = False,
 ) -> Ridge:
     """Brightest smooth frequency path through a (time, frequency) box.
 
     Viterbi over the whitened power: the path maximises the sum of brightness
-    along it, minus a quadratic penalty that reaches one whitened sigma at
-    the maximum allowed jump, ``max_slope_hz_per_s * hop``. Jumps beyond that
-    are not allowed. The peak is refined to sub-bin precision with a
+    along it, minus a quadratic penalty that reaches ``jump_penalty`` whitened
+    sigmas per frame at the maximum allowed jump, ``max_slope_hz_per_s * hop``.
+    Jumps beyond that are not allowed. The penalty is what stops the path from
+    wandering across dark bins to a brighter harmonic: a real curve near its
+    closest approach moves at a fraction of the limit and pays little, while
+    a sustained run at the limit costs more than the harmonic is worth. The peak is refined to sub-bin precision with a
     power-weighted centroid over the neighbouring bins.
 
     Pass ``already_whitened=True`` to skip the whitening when ``spec`` came
@@ -227,7 +231,7 @@ def extract_ridge(
     k_max = max(1, int(np.ceil(max_slope_hz_per_s * hop / df)))
     k_max = min(k_max, nf - 1) if nf > 1 else 0
     shifts = np.arange(-k_max, k_max + 1)
-    penalty = (shifts / max(k_max, 1)) ** 2
+    penalty = jump_penalty * (shifts / max(k_max, 1)) ** 2
     bins = np.arange(nf)
 
     score = W[:, 0].copy()
